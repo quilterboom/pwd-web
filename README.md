@@ -18,8 +18,9 @@
 ## 功能
 
 - ✅ **零知识密码存储**：每条密码由用户自己的「条目密码」保护（PBKDF2-SM3 + SM4-CBC），服务端不可解密。
-- ✅ **完整 CRUD**：密码查看 / 新增 / 修改 / 删除。
+- ✅ **完整 CRUD**：密码查看 / 新增 / 修改 / 删除；新增可选择加密算法（对称零知识 / GPG / SM2）；等待窗口保证后台解析完再消失。
 - ✅ **文件保险箱**：上传任意文件，服务端用 GPG 或 SM2 公钥加密落盘；可下载密文或解密下载原文；上传 / 解密 / 删除均记审计。
+- ✅ **组织密钥库**：在「密钥库」页签查看 / 生成 / 导入 / 导出本组织下的 GPG 与 SM2 密钥对；公钥下载便于给他人加密、私钥下载自留；按组织隔离，非管理员只看自己所属组织。
 - ✅ **修改记录（审计日志）**：每次新增、修改、删除都留下时间、操作人、变更说明，仅存密文快照不存明文。
 - ✅ **多账号 + 分组隔离**：管理员可新增账号；数据（密码 / 文件）按分组绑定，普通用户只看到所属分组的数据，管理员可跨组查看。
 - ✅ **系统管理面板**：在界面上管理账号（创建 / 编辑 / 删除 / 分配分组）和分组（创建 / 编辑成员 / 删除，分组有数据时阻止删除）。
@@ -191,7 +192,7 @@ bash backend/offline/build_image.sh          # Linux / macOS
 bash backend/offline/build_image.sh offline
 ```
 
-导出后的 tar 包约 **70MB**（压缩），可压缩后拷贝到离线服务器。
+导出后的 tar 包约 **70MB**（依赖干净的基础功能版本）；启用组织密钥库后约 **141MB**（含 `pgpy` / `gmssl`）。
 
 > ⚠️ 离线构建时，`backend/offline/wheels/` 必须是 **Linux (manylinux x86_64, cp313)** 版依赖包，
 > 可用 `get_wheels.sh` 配合 `--platform manylinux2014_x86_64 --python-version 313 --abi cp313` 在任意联网机下载。
@@ -243,7 +244,12 @@ ADMIN_PASSWORD='请改成强密码' docker compose up -d
 | --- | --- | --- |
 | POST | `/api/auth/login` | 登录获取 token |
 | GET | `/api/auth/me` | 当前用户（含可见分组） |
-| GET | `/api/keys/status` | 服务端密钥就绪情况 |
+| GET | `/api/keys/status` | 服务端密钥就绪情况（兼容 legacy 方案 / 文件保险箱） |
+| GET | `/api/orgkeys?group_id=` | 组织密钥库列表（按组织过滤；非管理员看自己所属组织） |
+| POST | `/api/orgkeys/generate` | 新建密钥（GPG / SM2，公私钥完整生成） |
+| POST | `/api/orgkeys/import` | 导入密钥（公钥必填、私钥可选；带 round-trip 自检） |
+| GET | `/api/orgkeys/{kid}/export?kind=public\|private` | 导出公钥 / 私钥为附件下载（双 Content-Disposition 兼容中文文件名） |
+| DELETE | `/api/orgkeys/{kid}` | 删除密钥记录 |
 | GET | `/api/passwords` | 密码列表（不含明文） |
 | POST | `/api/passwords` | 新增（**必填**：`title` `secret` `group_id` `entry_password`） |
 | GET | `/api/passwords/{id}?entry_password=...` | 查看（`legacy` 免条目密码，`entry` 必须提供） |
