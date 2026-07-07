@@ -161,7 +161,7 @@ async function loadEntries() {
 function renderTable() {
   const q = ($("search-input").value || "").trim().toLowerCase();
   const rows = state.entries.filter((e) =>
-    !q || (e.username || "").toLowerCase().includes(q)
+    !q || (e.username || "").toLowerCase().includes(q) || (e.key_name || "").toLowerCase().includes(q)
   );
   const tbody = $("pw-tbody");
   tbody.innerHTML = "";
@@ -172,9 +172,10 @@ function renderTable() {
   }
   for (const e of rows) {
     const tr = document.createElement("tr");
+    const keyTip = e.key_name ? `<div style="font-size:11px;color:#6b7280;margin-top:2px">🔑 ${esc(e.key_name)}</div>` : "";
     tr.innerHTML = `
-      <td>${esc(e.username)}</td>
-      <td>${algoBadge(e.algorithm)}</td>
+      <td>${esc(e.username) || "<span style='color:#9ca3af'>未填</span>"}</td>
+      <td>${algoBadge(e.algorithm)}${keyTip}</td>
       <td>${esc(groupName(e.group_id))}</td>
       <td>${fmtTime(e.updated_at)}</td>
       <td>${esc(e.updated_by || e.created_by || "")}</td>
@@ -207,7 +208,32 @@ function fillGroupSelect(selId, selectedId) {
   }
 }
 
-/* ---------- 加密方式 ↔ 条目密码框 联动 ---------- */
+/* ---------- 加密方式 ↔ 条目密码框 + OrgKey 选择联动 ---------- */
+async function loadOrgkeysForSelect() {
+  const sel = $("f-orgkey");
+  sel.innerHTML = "";
+  const groupId = Number($("f-group").value || 0);
+  if (!groupId) {
+    sel.innerHTML = `<option value="">（请先选择分组）</option>`;
+    return;
+  }
+  sel.disabled = true;
+  try {
+    const rows = await api(`/api/orgkeys?group_id=${groupId}`);
+    sel.innerHTML = `<option value="">（默认：服务端密钥）</option>`;
+    for (const k of rows) {
+      const opt = document.createElement("option");
+      opt.value = k.id;
+      const hasLabel = k.has_private ? "（含私钥）" : "（仅公钥）";
+      opt.textContent = `${k.name} · ${k.algorithm.toUpperCase()} ${hasLabel}`;
+      sel.appendChild(opt);
+    }
+    sel.disabled = false;
+  } catch (e) {
+    sel.innerHTML = `<option value="">（加载失败：${esc(e.message)}）</option>`;
+  }
+}
+
 function applyAlgoUI() {
   const algo = $("f-algorithm").value;
   const isSymmetric = algo === "symmetric";
@@ -216,6 +242,11 @@ function applyAlgoUI() {
   $("f-entry-password").required = isSymmetric;
   $("f-new-pw-label").classList.toggle("hidden", !isSymmetric || state.editingId == null);
   $("f-new-entry-password").classList.toggle("hidden", !isSymmetric || state.editingId == null);
+  // OrgKey 选取：gpg/sm2 显示（用本组织密钥），symmetric 隐藏
+  $("f-orgkey-label").classList.toggle("hidden", isSymmetric);
+  $("f-orgkey").classList.toggle("hidden", isSymmetric);
+  $("f-orgkey-hint").classList.toggle("hidden", isSymmetric);
+  if (!isSymmetric) loadOrgkeysForSelect();
 }
 
 /* ---------- 表单弹窗（新增 / 编辑） ---------- */
@@ -224,7 +255,6 @@ function openAdd() {
   state.originalSecret = "";
   state.originalAlgorithm = "";
   $("form-title").textContent = "新增密码";
-  $("f-title").value = "";
   $("f-username").value = "";
   $("f-secret").value = "";
   $("f-secret").type = "password";
@@ -239,7 +269,7 @@ function openAdd() {
   $("form-error").textContent = "";
   applyAlgoUI();
   $("form-modal").classList.remove("hidden");
-  $("f-title").focus();
+  $("f-username").focus();
 }
 
 async function openEdit(id) {
@@ -248,7 +278,6 @@ async function openEdit(id) {
   state.editingId = id;
   state.originalAlgorithm = rec.algorithm;
   $("form-title").textContent = rec.scheme === "entry" ? "编辑密码（需条目密码）" : "编辑密码";
-  $("f-title").value = rec.title;
   $("f-username").value = rec.username;
   $("f-notes").value = rec.notes || "";
   $("f-comment").value = "";
@@ -266,7 +295,7 @@ async function openEdit(id) {
     state.originalSecret = "";
     $("f-secret").value = "";
   } else {
-    // legacy：服务端密钥，可直接取明文
+    // legacy：服务端密钥 / OrgKey 私钥，可直接取明文
     try {
       const full = await api("/api/passwords/" + id);
       state.originalSecret = full.secret;
@@ -279,27 +308,35 @@ async function openEdit(id) {
   $("f-secret").type = "password";
   $("f-reveal").textContent = "显示";
   applyAlgoUI();
+  // 编辑现有 legacy 记录时，把 orgkey 下拉默认选中这条记录曾经用过的密钥
+  if (!rec.scheme || rec.scheme !== "entry") {
+    setTimeout(() => {
+      const sel = $("f-orgkey");
+      if (sel && rec.orgkey_id) {
+        sel.value = String(rec.orgkey_id);
+      }
+    }, 200); // 等 loadOrgkeysForSelect 异步完成
+  }
   $("form-modal").classList.remove("hidden");
   if (rec.scheme === "entry") $("f-entry-password").focus();
-  else $("f-title").focus();
+  else $("f-username").focus();
 }
 
 function closeForm() { $("form-modal").classList.add("hidden"); }
 
 async function saveForm() {
   $("form-error").textContent = "";
-  const title = $("f-title").value.trim();
   const secret = $("f-secret").value;
   const algo = $("f-algorithm").value;
   const entryPassword = $("f-entry-password").value;
   const newEntryPassword = $("f-new-entry-password").value;
-  if (!title) return ($("form-error").textContent = "请输入标题");
+  const orgkeyVal = $("f-orgkey").value;
+  const orgkeyId = orgkeyVal ? Number(orgkeyVal) : null;
   if (!secret) return ($("form-error").textContent = "请输入密码 / 密钥明文");
   if (!state.groups.length) return ($("form-error").textContent = "你没有可用的分组，无法创建");
 
   const payload = {
-    title,
-    username: $("f-username").value,
+    username: $("f-username").value.trim(),
     notes: $("f-notes").value,
     comment: $("f-comment").value,
   };
@@ -313,6 +350,7 @@ async function saveForm() {
     payload.secret = secret;
     payload.algorithm = algo;
     if (algo === "symmetric") payload.entry_password = entryPassword;
+    if (algo !== "symmetric" && orgkeyId) payload.orgkey_id = orgkeyId;
   } else {
     const rec = state.entries.find((e) => e.id === state.editingId);
     // entry 当前方案：必须提供当前条目密码
@@ -325,6 +363,7 @@ async function saveForm() {
     payload.secret = secret;
     if (entryPassword) payload.entry_password = entryPassword;
     if (newEntryPassword) payload.new_entry_password = newEntryPassword;
+    if (algo !== "symmetric" && orgkeyId) payload.orgkey_id = orgkeyId;
   }
 
   const waitText = state.editingId == null ? "正在加密保存…" : "正在解密并重新加密…";
@@ -352,9 +391,10 @@ async function openView(id) {
   const rec = state.entries.find((e) => e.id === id);
   if (!rec) return;
   state.viewingId = id;
-  $("view-title").textContent = "查看：" + rec.username || rec.title || id;
+  $("view-title").textContent = "查看：" + (rec.username || rec.id);
   $("view-username").textContent = rec.username || "—";
-  $("view-algorithm").innerHTML = algoBadge(rec.algorithm);
+  const keyTip = rec.key_name ? ` <span style="color:#6b7280;font-size:13px">🔑 ${esc(rec.key_name)}</span>` : "";
+  $("view-algorithm").innerHTML = algoBadge(rec.algorithm) + keyTip;
   $("view-group").textContent = groupName(rec.group_id);
   $("view-notes").textContent = rec.notes || "—";
   $("view-lock-error").textContent = "";
@@ -413,7 +453,7 @@ async function openHistory(id) {
     const tbody = $("history-tbody");
     tbody.innerHTML = "";
     if (!rows.length) {
-      tbody.innerHTML = `<tr><td colspan="7" style="color:#6b7280">暂无记录</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6" style="color:#6b7280">暂无记录</td></tr>`;
     }
     const actLabel = { create: "新增", update: "修改", delete: "删除" };
     for (const r of rows) {
@@ -421,11 +461,10 @@ async function openHistory(id) {
       tr.innerHTML = `
         <td>${fmtTime(r.changed_at)}</td>
         <td class="act-${r.action}">${actLabel[r.action] || r.action}</td>
-        <td>${esc(r.title)}</td>
-        <td>${esc(r.username)}</td>
+        <td>${esc(r.username || "")}</td>
         <td>${algoBadge(r.algorithm)}</td>
-        <td>${esc(r.changed_by)}</td>
-        <td>${esc(r.comment)}</td>`;
+        <td>${esc(r.changed_by || "")}</td>
+        <td>${esc(r.comment || "")}</td>`;
       tbody.appendChild(tr);
     }
     $("history-modal").classList.remove("hidden");
@@ -519,11 +558,18 @@ async function uploadFile(file) {
 
 async function apiBlob(path) {
   const res = await fetch(path, { headers: { Authorization: "Bearer " + state.token } });
-  let detail = null;
-  try { detail = await res.json(); } catch (e) { /* 二进制 */ }
+  // 一定要先按 Content-Type 分支消费 body；
+  // 否则对非 JSON 响应（公钥文本/文件密文）盲目 res.json() 会消耗 stream，
+  // 后续 res.blob() 抛 "body stream already read"。
+  const ct = (res.headers.get("Content-Type") || "").toLowerCase();
   if (!res.ok) {
-    const msg = (detail && (detail.detail || detail.message)) || ("下载失败 (" + res.status + ")");
-    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    let detail = null;
+    if (ct.includes("json")) {
+      try { detail = await res.json(); } catch (e) {}
+      const msg = (detail && (detail.detail || detail.message)) || ("下载失败 (" + res.status + ")");
+      throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    }
+    throw new Error("下载失败 (" + res.status + ")");
   }
   return { blob: await res.blob(), disposition: res.headers.get("Content-Disposition") };
 }
@@ -730,7 +776,7 @@ async function exportOrgKey(id, kind) {
   const entry = keyState.entries.find((k) => k.id === id);
   const defaultName = entry ? entry.name : "key";
   try {
-    const { blob, disposition } = await apiBlob("/api/orgkeys/" + id + "/export?type=" + kind);
+    const { blob, disposition } = await apiBlob("/api/orgkeys/" + id + "/export?kind=" + kind);
     const suffix = kind === "public" ? "_pub" : "_priv";
     const ext = entry && entry.algorithm === "gpg" ? ".asc" : ".key";
     triggerDownload(blob, filenameFromDisposition(disposition, defaultName + suffix + ext));
@@ -1012,6 +1058,9 @@ function bind() {
   });
   $("f-gen").addEventListener("click", genRandom);
   $("f-algorithm").addEventListener("change", applyAlgoUI);
+  $("f-group").addEventListener("change", () => {
+    if ($("f-algorithm").value !== "symmetric") loadOrgkeysForSelect();
+  });
   $("view-close").addEventListener("click", () => $("view-modal").classList.add("hidden"));
   $("view-unlock").addEventListener("click", viewUnlock);
   $("view-entry-password").addEventListener("keydown", (e) => { if (e.key === "Enter") viewUnlock(); });

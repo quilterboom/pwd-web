@@ -114,20 +114,23 @@
   <div id="form-modal" class="modal hidden">
     <div class="modal-card">
       <h2 id="form-title">新增密码</h2>
-      <label>标题 *</label>
-      <input id="f-title" type="text" />
-      <label>账号</label>
+      <label>账号 *</label>
       <input id="f-username" type="text" />
       <label>加密方式 *</label>
       <select id="f-algorithm">
         <option value="symmetric">对称加密（条目密码，零知识）</option>
-        <option value="gpg">GPG 加密（服务端密钥）</option>
-        <option value="sm2">SM2 加密（国密，服务端密钥）</option>
+        <option value="gpg">GPG 加密（服务端密钥 / 可选本组织密钥）</option>
+        <option value="sm2">SM2 加密（国密，服务端密钥 / 可选本组织密钥）</option>
       </select>
       <label id="f-entry-pw-label">条目密码 * <span class="hint">对称加密时必填；服务端密钥方式无需填写</span></label>
       <input id="f-entry-password" type="password" autocomplete="new-password" />
       <label id="f-new-pw-label" class="hidden">新条目密码（修改后留空则沿用原密码）</label>
       <input id="f-new-entry-password" type="password" autocomplete="new-password" class="hidden" />
+      <label id="f-orgkey-label" class="hidden">加密密钥（仅 gpg / sm2，留空则用服务端默认密钥）</label>
+      <select id="f-orgkey" class="hidden"></select>
+      <p id="f-orgkey-hint" class="hint hidden" style="margin:-4px 0 8px;color:#6b7280;font-size:12px;line-height:1.5">
+        选择该分组下已生成的密钥；公钥加密后，持有私钥的成员即可解密查看。
+      </p>
       <label>所属分组 *</label>
       <select id="f-group"></select>
       <label>密码 / 密钥明文 *</label>
@@ -185,7 +188,7 @@
       <h2>修改记录</h2>
       <table class="hist-table">
         <thead>
-          <tr><th>时间</th><th>动作</th><th>标题</th><th>账号</th><th>算法</th><th>操作人</th><th>说明</th></tr>
+          <tr><th>时间</th><th>动作</th><th>账号</th><th>算法</th><th>操作人</th><th>说明</th></tr>
         </thead>
         <tbody id="history-tbody"></tbody>
       </table>

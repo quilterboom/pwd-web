@@ -82,11 +82,11 @@ class PasswordEntry(Base):
     __tablename__ = "passwords"
 
     id = Column(Integer, primary_key=True)
-    title = Column(String(255), nullable=False)
+    title = Column(String(255), nullable=True, default="")  # 已取消强制标题；保留字段以便审计/兼容旧记录
     username = Column(String(255), default="")
-    # algorithm: 'gpg' | 'sm2' 为旧的服务端密钥加密；'symmetric' 为每条独立密码加密
+    # algorithm: 'gpg' | 'sm2' 为 legacy 方案，'symmetric' 为每条独立密码加密
     algorithm = Column(String(16), nullable=False, default="symmetric")
-    # scheme: 'legacy' = 服务端 GPG/SM2 密钥加密（无需条目密码即可查看，兼容旧数据）；
+    # scheme: 'legacy' = legacy 方案（兼容旧数据）；
     #         'entry'  = 每条密码用自己的「条目密码」对称加密（服务端不持有密钥，查看/修改必须输密码）
     scheme = Column(String(16), default="legacy")
     ciphertext = Column(Text, nullable=False)  # legacy: gpg armored / sm2 base64；entry: SM4-CBC 十六进制密文
@@ -94,6 +94,7 @@ class PasswordEntry(Base):
     entry_iv = Column(String(64), default="")  # entry 方案：SM4-CBC 的 iv（hex）
     notes = Column(Text, default="")
     group_id = Column(Integer, index=True, nullable=True)  # 绑定分组
+    orgkey_id = Column(Integer, ForeignKey("org_keys.id", ondelete="SET NULL"), index=True, nullable=True)  # legacy 方案使用的 OrgKey（选用，不填则用服务端 KeyRecord）
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
     created_by = Column(String(64), default="")

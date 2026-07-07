@@ -43,6 +43,8 @@ def _migrate_columns():
         ("passwords", "scheme", "VARCHAR(16) DEFAULT 'legacy'"),
         ("passwords", "entry_salt", "VARCHAR(64) DEFAULT ''"),
         ("passwords", "entry_iv", "VARCHAR(64) DEFAULT ''"),
+        # legacy 方案可选指定 OrgKey（按组织持有密钥对加密，而不是服务端默认密钥）
+        ("passwords", "orgkey_id", "INTEGER"),
     ]
     with engine.begin() as conn:
         for table, col, decl in alterations:
