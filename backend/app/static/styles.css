@@ -157,3 +157,36 @@ label { font-size: 13px; color: var(--muted); margin-top: 10px; }
 
 /* 管理入口按钮 */
 #admin-btn { margin-right: 8px; }
+
+/* 等待弹窗 */
+.wait {
+  position: fixed; inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 200;
+}
+.wait-card {
+  background: #fff;
+  border-radius: 14px;
+  padding: 24px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  min-width: 220px;
+}
+.wait-card p {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+}
+.spinner {
+  width: 36px;
+  height: 36px;
+  border: 4px solid #e5e7eb;
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }

@@ -42,6 +42,18 @@ function showToast(msg) {
   showToast._t = setTimeout(() => t.classList.add("hidden"), 2200);
 }
 
+/* 全屏等待窗口：等待后台解析（加解密 / 网络）完成或失败后关闭 */
+function showWait(text) {
+  const m = $("wait-modal");
+  if (!m) return;
+  $("wait-text").textContent = text || "正在处理…";
+  m.classList.remove("hidden");
+}
+function hideWait() {
+  const m = $("wait-modal");
+  if (m) m.classList.add("hidden");
+}
+
 function algoBadge(a) {
   if (a === "symmetric") return `<span class="badge entry">🔑 条目密码</span>`;
   const label = a === "sm2" ? "SM2" : "GPG";
@@ -149,19 +161,18 @@ async function loadEntries() {
 function renderTable() {
   const q = ($("search-input").value || "").trim().toLowerCase();
   const rows = state.entries.filter((e) =>
-    !q || e.title.toLowerCase().includes(q) || (e.username || "").toLowerCase().includes(q)
+    !q || (e.username || "").toLowerCase().includes(q)
   );
   const tbody = $("pw-tbody");
   tbody.innerHTML = "";
   $("empty-hint").classList.toggle("hidden", state.entries.length > 0);
   if (!rows.length && state.entries.length) {
-    tbody.innerHTML = `<tr><td colspan="7" style="color:#6b7280">无匹配结果</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" style="color:#6b7280">无匹配结果</td></tr>`;
     return;
   }
   for (const e of rows) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>${esc(e.title)}</td>
       <td>${esc(e.username)}</td>
       <td>${algoBadge(e.algorithm)}</td>
       <td>${esc(groupName(e.group_id))}</td>
@@ -196,6 +207,17 @@ function fillGroupSelect(selId, selectedId) {
   }
 }
 
+/* ---------- 加密方式 ↔ 条目密码框 联动 ---------- */
+function applyAlgoUI() {
+  const algo = $("f-algorithm").value;
+  const isSymmetric = algo === "symmetric";
+  $("f-entry-pw-label").classList.toggle("hidden", !isSymmetric);
+  $("f-entry-password").classList.toggle("hidden", !isSymmetric);
+  $("f-entry-password").required = isSymmetric;
+  $("f-new-pw-label").classList.toggle("hidden", !isSymmetric || state.editingId == null);
+  $("f-new-entry-password").classList.toggle("hidden", !isSymmetric || state.editingId == null);
+}
+
 /* ---------- 表单弹窗（新增 / 编辑） ---------- */
 function openAdd() {
   state.editingId = null;
@@ -207,15 +229,15 @@ function openAdd() {
   $("f-secret").value = "";
   $("f-secret").type = "password";
   $("f-reveal").textContent = "显示";
+  $("f-algorithm").value = "symmetric";
   $("f-entry-password").value = "";
   $("f-new-entry-password").value = "";
-  $("f-new-pw-label").classList.add("hidden");
-  $("f-new-entry-password").classList.add("hidden");
   $("f-notes").value = "";
   $("f-comment").value = "";
   $("f-group").disabled = false;
   fillGroupSelect("f-group", null);
   $("form-error").textContent = "";
+  applyAlgoUI();
   $("form-modal").classList.remove("hidden");
   $("f-title").focus();
 }
@@ -236,12 +258,13 @@ async function openEdit(id) {
   $("f-group").disabled = true; // 数据归属固定
   $("form-error").textContent = "";
 
+  // 根据当前方案选择默认算法
+  $("f-algorithm").value = rec.algorithm; // 'symmetric' | 'gpg' | 'sm2'
+
   if (rec.scheme === "entry") {
     // entry 方案：不预填明文，必须输入当前条目密码才能修改
     state.originalSecret = "";
     $("f-secret").value = "";
-    $("f-new-pw-label").classList.remove("hidden");
-    $("f-new-entry-password").classList.remove("hidden");
   } else {
     // legacy：服务端密钥，可直接取明文
     try {
@@ -252,11 +275,10 @@ async function openEdit(id) {
       return;
     }
     $("f-secret").value = state.originalSecret;
-    $("f-new-pw-label").classList.add("hidden");
-    $("f-new-entry-password").classList.add("hidden");
   }
   $("f-secret").type = "password";
   $("f-reveal").textContent = "显示";
+  applyAlgoUI();
   $("form-modal").classList.remove("hidden");
   if (rec.scheme === "entry") $("f-entry-password").focus();
   else $("f-title").focus();
@@ -268,6 +290,7 @@ async function saveForm() {
   $("form-error").textContent = "";
   const title = $("f-title").value.trim();
   const secret = $("f-secret").value;
+  const algo = $("f-algorithm").value;
   const entryPassword = $("f-entry-password").value;
   const newEntryPassword = $("f-new-entry-password").value;
   if (!title) return ($("form-error").textContent = "请输入标题");
@@ -282,26 +305,30 @@ async function saveForm() {
   };
 
   if (state.editingId == null) {
-    // 新增：条目密码必填（每条独立对称加密）
-    if (!entryPassword) return ($("form-error").textContent = "请输入条目密码");
+    // 新增
+    if (algo === "symmetric" && !entryPassword)
+      return ($("form-error").textContent = "请输入条目密码");
     const groupId = Number($("f-group").value);
     payload.group_id = groupId;
     payload.secret = secret;
-    payload.entry_password = entryPassword;
+    payload.algorithm = algo;
+    if (algo === "symmetric") payload.entry_password = entryPassword;
   } else {
     const rec = state.entries.find((e) => e.id === state.editingId);
-    if (rec && rec.scheme === "entry") {
-      // entry 编辑：必须提供当前条目密码；新条目密码可选
-      if (!entryPassword) return ($("form-error").textContent = "请输入当前条目密码才能修改");
-      payload.entry_password = entryPassword;
-      if (newEntryPassword) payload.new_entry_password = newEntryPassword;
-      if (secret) payload.secret = secret; // 仅在填写时更新明文
-    } else {
-      // legacy 编辑：仅明文变化时上传
-      if (secret && secret !== state.originalSecret) payload.secret = secret;
-    }
+    // entry 当前方案：必须提供当前条目密码
+    if (rec && rec.scheme === "entry" && !entryPassword)
+      return ($("form-error").textContent = "请输入当前条目密码才能修改");
+    // 目标 symmetric 必须有可用的条目密码（沿用当前或新设）
+    if (algo === "symmetric" && !entryPassword && !newEntryPassword)
+      return ($("form-error").textContent = "切换到「对称加密」必须提供条目密码或新条目密码");
+    payload.algorithm = algo;
+    payload.secret = secret;
+    if (entryPassword) payload.entry_password = entryPassword;
+    if (newEntryPassword) payload.new_entry_password = newEntryPassword;
   }
 
+  const waitText = state.editingId == null ? "正在加密保存…" : "正在解密并重新加密…";
+  showWait(waitText);
   try {
     if (state.editingId == null) {
       await api("/api/passwords", { method: "POST", body: JSON.stringify(payload) });
@@ -314,6 +341,9 @@ async function saveForm() {
     loadEntries();
   } catch (e) {
     $("form-error").textContent = e.message;
+    showToast("保存失败：" + e.message);
+  } finally {
+    hideWait();
   }
 }
 
@@ -322,7 +352,7 @@ async function openView(id) {
   const rec = state.entries.find((e) => e.id === id);
   if (!rec) return;
   state.viewingId = id;
-  $("view-title").textContent = "查看：" + rec.title;
+  $("view-title").textContent = "查看：" + rec.username || rec.title || id;
   $("view-username").textContent = rec.username || "—";
   $("view-algorithm").innerHTML = algoBadge(rec.algorithm);
   $("view-group").textContent = groupName(rec.group_id);
@@ -335,26 +365,30 @@ async function openView(id) {
     $("view-lock").classList.remove("hidden");
     $("view-secret-wrap").classList.add("hidden");
     $("view-secret").textContent = "";
+    $("view-modal").classList.remove("hidden");
+    $("view-entry-password").focus();
   } else {
-    // legacy：服务端密钥，直接取明文
+    // legacy：服务端密钥，直接取明文（带等待窗口）
+    showWait("正在解密…");
     try {
       const full = await api("/api/passwords/" + id);
       $("view-lock").classList.add("hidden");
       $("view-secret-wrap").classList.remove("hidden");
       $("view-secret").textContent = full.secret;
+      $("view-modal").classList.remove("hidden");
     } catch (e) {
       showToast("加载失败：" + e.message);
-      return;
+    } finally {
+      hideWait();
     }
   }
-  $("view-modal").classList.remove("hidden");
-  if (rec.scheme === "entry") $("view-entry-password").focus();
 }
 
 async function viewUnlock() {
   const id = state.viewingId;
   const pw = $("view-entry-password").value;
   if (!pw) { $("view-lock-error").textContent = "请输入条目密码"; return; }
+  showWait("正在解密…");
   try {
     const full = await api("/api/passwords/" + id + "?entry_password=" + encodeURIComponent(pw));
     $("view-lock").classList.add("hidden");
@@ -362,6 +396,8 @@ async function viewUnlock() {
     $("view-secret").textContent = full.secret;
   } catch (e) {
     $("view-lock-error").textContent = e.message;
+  } finally {
+    hideWait();
   }
 }
 
@@ -565,13 +601,166 @@ async function deleteFile(id) {
   }
 }
 
+/* ---------- 密钥库（按组织维度） ---------- */
+let keyState = { entries: [] };
+
+async function loadOrgKeys() {
+  try {
+    fillGroupSelect("key-group-filter", null);
+    keyState.entries = await api("/api/orgkeys");
+    renderKeyTable();
+  } catch (e) {
+    if (isAuthErr(e)) doLogout();
+    else showToast("加载密钥库失败：" + e.message);
+  }
+}
+
+function renderKeyTable() {
+  const tbody = $("key-tbody");
+  tbody.innerHTML = "";
+  const filterGid = Number($("key-group-filter").value || 0);
+  const q = ($("key-search").value || "").trim().toLowerCase();
+  let rows = keyState.entries;
+  if (filterGid > 0) rows = rows.filter((k) => k.group_id === filterGid);
+  if (q) rows = rows.filter((k) => (k.name + " " + (k.created_by || "")).toLowerCase().includes(q));
+  rows.forEach((k) => tbody.appendChild(keyRow(k)));
+  $("key-empty").classList.toggle("hidden", keyState.entries.length > 0);
+  if (!rows.length && keyState.entries.length) {
+    tbody.innerHTML = `<tr><td colspan="8" style="color:#6b7280">无匹配结果</td></tr>`;
+  } else if (!keyState.entries.length) {
+    tbody.innerHTML = "";
+  }
+}
+
+function keyRow(k) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td>${esc(k.name)}</td>
+    <td>${algoBadge(k.algorithm)}</td>
+    <td>${esc(groupName(k.group_id))}</td>
+    <td><code style="font-size:11px">${esc(k.fingerprint)}</code></td>
+    <td>${k.has_private ? '<span class="ok">✓ 有</span>' : '<span style="color:#9ca3af">— 无</span>'}</td>
+    <td>${fmtTime(k.created_at)}</td>
+    <td>${esc(k.created_by || "")}</td>
+    <td><div class="ops">
+      <button class="btn ghost small" data-kact="pub"  data-id="${k.id}">导出公钥</button>
+      ${k.has_private ? `<button class="btn ghost small" data-kact="priv" data-id="${k.id}">导出私钥</button>` : ""}
+      <button class="btn danger small" data-kact="del" data-id="${k.id}">删除</button>
+    </div></td>`;
+  return tr;
+}
+
+function openKeyGen() {
+  if (!state.groups.length) { showToast("你没有可用的分组，无法生成"); return; }
+  $("kg-name").value = "";
+  $("kg-algorithm").value = "gpg";
+  fillGroupSelect("kg-group", state.isAdmin ? null : state.groups[0].id);
+  $("kg-error").textContent = "";
+  $("keygen-modal").classList.remove("hidden");
+  $("kg-name").focus();
+}
+function closeKeyGen() { $("keygen-modal").classList.add("hidden"); }
+
+async function saveKeyGen() {
+  $("kg-error").textContent = "";
+  const name = $("kg-name").value.trim();
+  const algorithm = $("kg-algorithm").value;
+  const groupId = Number($("kg-group").value);
+  if (!name) return ($("kg-error").textContent = "请输入密钥名称");
+  if (!groupId) return ($("kg-error").textContent = "请选择所属分组");
+  showWait("正在生成密钥对…");
+  try {
+    await api("/api/orgkeys/generate", {
+      method: "POST",
+      body: JSON.stringify({ name, algorithm, group_id: groupId }),
+    });
+    showToast("已生成并保存密钥对");
+    closeKeyGen();
+    loadOrgKeys();
+  } catch (e) {
+    $("kg-error").textContent = e.message;
+  } finally {
+    hideWait();
+  }
+}
+
+function openKeyImport() {
+  if (!state.groups.length) { showToast("你没有可用的分组，无法导入"); return; }
+  $("ki-name").value = "";
+  $("ki-algorithm").value = "gpg";
+  fillGroupSelect("ki-group", state.isAdmin ? null : state.groups[0].id);
+  $("ki-pub").value = "";
+  $("ki-priv").value = "";
+  $("ki-error").textContent = "";
+  $("keyimport-modal").classList.remove("hidden");
+  $("ki-name").focus();
+}
+function closeKeyImport() { $("keyimport-modal").classList.add("hidden"); }
+
+async function saveKeyImport() {
+  $("ki-error").textContent = "";
+  const name = $("ki-name").value.trim();
+  const algorithm = $("ki-algorithm").value;
+  const groupId = Number($("ki-group").value);
+  const publicKey = $("ki-pub").value;
+  const privateKey = $("ki-priv").value;
+  if (!name) return ($("ki-error").textContent = "请输入密钥名称");
+  if (!publicKey) return ($("ki-error").textContent = "请粘贴公钥内容");
+  if (!groupId) return ($("ki-error").textContent = "请选择所属分组");
+  showWait("正在校验并导入密钥…");
+  try {
+    await api("/api/orgkeys/import", {
+      method: "POST",
+      body: JSON.stringify({
+        name, algorithm, group_id: groupId,
+        public_key: publicKey, private_key: privateKey,
+      }),
+    });
+    showToast(privateKey ? "已导入公钥 + 私钥" : "已导入公钥（无私钥）");
+    closeKeyImport();
+    loadOrgKeys();
+  } catch (e) {
+    $("ki-error").textContent = e.message;
+  } finally {
+    hideWait();
+  }
+}
+
+async function exportOrgKey(id, kind) {
+  const entry = keyState.entries.find((k) => k.id === id);
+  const defaultName = entry ? entry.name : "key";
+  try {
+    const { blob, disposition } = await apiBlob("/api/orgkeys/" + id + "/export?type=" + kind);
+    const suffix = kind === "public" ? "_pub" : "_priv";
+    const ext = entry && entry.algorithm === "gpg" ? ".asc" : ".key";
+    triggerDownload(blob, filenameFromDisposition(disposition, defaultName + suffix + ext));
+    showToast(kind === "public" ? "公钥已导出" : "⚠ 私钥已导出，请妥善保管");
+  } catch (e) {
+    showToast("导出失败：" + e.message);
+  }
+}
+
+async function deleteOrgKey(id) {
+  if (!confirm("确认删除该密钥条目？该操作不可撤销。")) return;
+  try {
+    await api("/api/orgkeys/" + id, { method: "DELETE" });
+    showToast("已删除");
+    loadOrgKeys();
+  } catch (e) {
+    showToast("删除失败：" + e.message);
+  }
+}
+
 function switchTab(tab) {
   document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   $("pw-panel").classList.toggle("hidden", tab !== "pw");
   $("file-panel").classList.toggle("hidden", tab !== "file");
+  $("key-panel").classList.toggle("hidden", tab !== "key");
   if (tab === "file") {
     fillGroupSelect("file-group", null);
     loadFiles();
+  } else if (tab === "key") {
+    loadOrgKeys();
   }
 }
 
@@ -822,6 +1011,7 @@ function bind() {
     else { inp.type = "password"; $("f-reveal").textContent = "显示"; }
   });
   $("f-gen").addEventListener("click", genRandom);
+  $("f-algorithm").addEventListener("change", applyAlgoUI);
   $("view-close").addEventListener("click", () => $("view-modal").classList.add("hidden"));
   $("view-unlock").addEventListener("click", viewUnlock);
   $("view-entry-password").addEventListener("keydown", (e) => { if (e.key === "Enter") viewUnlock(); });
@@ -878,6 +1068,25 @@ function bind() {
   $("user-save").addEventListener("click", saveUser);
   $("group-cancel").addEventListener("click", () => $("group-modal").classList.add("hidden"));
   $("group-save").addEventListener("click", saveGroup);
+
+  // 密钥库
+  $("key-gen-btn").addEventListener("click", openKeyGen);
+  $("kg-cancel").addEventListener("click", closeKeyGen);
+  $("kg-save").addEventListener("click", saveKeyGen);
+  $("key-import-btn").addEventListener("click", openKeyImport);
+  $("ki-cancel").addEventListener("click", closeKeyImport);
+  $("ki-save").addEventListener("click", saveKeyImport);
+  $("key-group-filter").addEventListener("change", renderKeyTable);
+  $("key-search").addEventListener("input", renderKeyTable);
+  $("key-tbody").addEventListener("click", (ev) => {
+    const btn = ev.target.closest("button[data-kact]");
+    if (!btn) return;
+    const id = Number(btn.dataset.id);
+    const act = btn.dataset.kact;
+    if (act === "pub") exportOrgKey(id, "public");
+    else if (act === "priv") exportOrgKey(id, "private");
+    else if (act === "del") deleteOrgKey(id);
+  });
   $("admin-users-tbody").addEventListener("click", (ev) => {
     const btn = ev.target.closest("button[data-uact]");
     if (!btn) return;

@@ -56,6 +56,28 @@ class KeyRecord(Base):
     created_at = Column(DateTime, default=_utcnow)
 
 
+class OrgKey(Base):
+    """组织级密钥库：每个分组可保存多对命名密钥（公钥 + 可选私钥）。
+
+    用于在团队/部门内部分发加密用的公钥，或导入外部公钥做共享加密。
+    私钥字段允许为空（仅公钥条目常用于「只需对方能解密但本地不持有私钥」的场景）。
+    """
+
+    __tablename__ = "org_keys"
+
+    id = Column(Integer, primary_key=True)
+    group_id = Column(Integer, ForeignKey("groups.id", ondelete="CASCADE"), index=True, nullable=False)
+    name = Column(String(128), nullable=False)  # 用户起的名字，例如 "研发中心 GPG 主密钥"
+    algorithm = Column(String(16), nullable=False)  # 'gpg' | 'sm2'
+    public_key = Column(Text, nullable=False)
+    private_key = Column(Text, nullable=True)
+    fingerprint = Column(String(64), default="")  # 指纹/标识，方便识别密钥
+    has_private = Column(Boolean, nullable=False, default=False)  # 是否存有私钥（便于前端显示）
+    created_by = Column(String(64), default="")
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
 class PasswordEntry(Base):
     __tablename__ = "passwords"
 

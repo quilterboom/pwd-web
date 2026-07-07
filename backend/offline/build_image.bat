@@ -9,12 +9,16 @@ cd /d "%~dp0\.."
 set IMAGE=passwdpm:latest
 set TARBALL=backend\offline\passwdpm_image.tar
 
+REM 目标服务器是 Linux x86_64；显式指定 platform，避免在 arm64 / 多架构主机上
+REM 产出无法在目标服务器运行的镜像。
+set PLATFORM=linux/amd64
+
 if "%1"=="offline" (
   echo [offline] 构建镜像（依赖来自 offline\wheels，需先准备好 Linux 版依赖包）
-  docker build --no-cache -t %IMAGE% --build-arg OFFLINE=1 ./backend
+  docker build --no-cache --platform %PLATFORM% -t %IMAGE% --build-arg OFFLINE=1 ./backend
 ) else (
   echo [online] 构建镜像（依赖从 PyPI 拉取）
-  docker build --no-cache -t %IMAGE% ./backend
+  docker build --no-cache --platform %PLATFORM% -t %IMAGE% ./backend
 )
 
 echo 导出镜像到 %TARBALL%

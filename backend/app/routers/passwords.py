@@ -29,18 +29,19 @@ class CreateRequest(BaseModel):
     notes: str = ""
     comment: str = ""
     group_id: int  # 必填：数据绑定的分组
-    entry_password: str  # 条目密码：每条密码独立对称加密，查看/修改均需此密码
+    algorithm: str = "symmetric"  # 'symmetric' = 条目密码对称加密；'gpg' / 'sm2' = 服务端密钥
+    entry_password: str = ""  # algorithm='symmetric' 时必填；其余算法不需要
 
 
 class UpdateRequest(BaseModel):
     title: Optional[str] = None
     username: Optional[str] = None
-    algorithm: Optional[str] = None
+    algorithm: Optional[str] = None  # 目标算法：'symmetric' | 'gpg' | 'sm2'（省略则保持原方案）
     secret: Optional[str] = None
     notes: Optional[str] = None
     comment: str = ""
-    entry_password: Optional[str] = None  # 当前条目密码（scheme=entry 时必填，用于解密现有内容）
-    new_entry_password: Optional[str] = None  # 可选：修改为新条目密码后重新加密
+    entry_password: Optional[str] = None  # 当前条目密码（scheme=entry 或目标改 symmetric 时必填）
+    new_entry_password: Optional[str] = None  # 仅当目标为 symmetric 时使用（不填则沿用当前/服务端密钥加密）
 
 
 def _serialize_meta(e: PasswordEntry) -> dict:
@@ -68,16 +69,32 @@ def _require_algorithm(algo: Optional[str]) -> Optional[str]:
     return algo
 
 
-def _encrypt_for_create(req: CreateRequest) -> dict:
-    """新密码一律用「条目密码」做对称加密（PBKDF2-SM3 + SM4-CBC），服务端不持有密钥。"""
-    enc = entry_cipher.encrypt_entry(req.secret, req.entry_password)
-    return {
-        "algorithm": "symmetric",
-        "scheme": "entry",
-        "ciphertext": enc["ciphertext"],
-        "entry_salt": enc["salt"],
-        "entry_iv": enc["iv"],
-    }
+def _encrypt_for_create(db: Session, req: CreateRequest) -> dict:
+    """按 algorithm 分流：symmetric → 条目密码方案；gpg/sm2 → 服务端密钥方案。"""
+    algo = (req.algorithm or "symmetric").lower()
+    if algo == "symmetric":
+        if not req.entry_password:
+            raise HTTPException(
+                status_code=400,
+                detail="使用「对称加密」必须提供条目密码",
+            )
+        enc = entry_cipher.encrypt_entry(req.secret, req.entry_password)
+        return {
+            "algorithm": "symmetric",
+            "scheme": "entry",
+            "ciphertext": enc["ciphertext"],
+            "entry_salt": enc["salt"],
+            "entry_iv": enc["iv"],
+        }
+    if algo in ("gpg", "sm2"):
+        return {
+            "algorithm": algo,
+            "scheme": "legacy",
+            "ciphertext": manager.encrypt_secret(db, algo, req.secret),
+            "entry_salt": "",
+            "entry_iv": "",
+        }
+    raise HTTPException(status_code=400, detail=f"不支持的加密方式: {algo}")
 
 
 def _decrypt_entry_secret(db: Session, e: PasswordEntry, entry_password: Optional[str]) -> str:
@@ -121,7 +138,7 @@ def create(
 ):
     ensure_group_access(db, user, req.group_id)
 
-    fields = _encrypt_for_create(req)
+    fields = _encrypt_for_create(db, req)
     entry = PasswordEntry(
         title=req.title,
         username=req.username,
@@ -191,7 +208,7 @@ def update(
         changes.append("notes")
 
     if entry.scheme == "entry":
-        # 条目密码方案：必须先解密现有内容，再按需重新加密
+        # 当前为条目密码方案
         if not req.entry_password:
             raise HTTPException(status_code=400, detail="修改受「条目密码」保护的密码必须提供 entry_password")
         try:
@@ -201,45 +218,54 @@ def update(
             )
         except entry_cipher.WrongPasswordError:
             raise HTTPException(status_code=401, detail="条目密码错误，无法修改")
+    else:
+        # legacy：服务端密钥直接解密
+        current_secret = manager.decrypt_secret(db, entry.algorithm, entry.ciphertext)
 
-        new_secret = req.secret if req.secret is not None else current_secret
-        if req.secret is not None and req.secret != current_secret:
-            changes.append("secret")
+    new_secret = req.secret if req.secret is not None else current_secret
+    if req.secret is not None and req.secret != current_secret:
+        changes.append("secret")
 
-        algo = entry.algorithm
-        if req.algorithm is not None and req.algorithm != entry.algorithm:
-            _require_algorithm(req.algorithm)
-            algo = req.algorithm
+    # 确定目标 scheme 与 algorithm
+    target_algo = (req.algorithm or entry.algorithm or "symmetric").lower()
+    target_scheme = "entry" if target_algo == "symmetric" else "legacy"
+    algo_changed = (target_algo != entry.algorithm) or (
+        ("entry" if entry.algorithm == "symmetric" else "legacy") != target_scheme
+    )
 
-        # 用新密码（或沿用当前密码）重新加密
+    # 校验
+    if target_algo not in ("symmetric", "gpg", "sm2"):
+        raise HTTPException(status_code=400, detail=f"不支持的加密方式: {target_algo}")
+    if target_scheme == "entry":
+        # entry 方案：用 new_entry_password（沿用当前条目密码）作为加密口令
         enc_pw = req.new_entry_password or req.entry_password
+        if not enc_pw:
+            raise HTTPException(
+                status_code=400,
+                detail="切换到「对称加密」必须提供 new_entry_password（或保持当前条目密码）",
+            )
+
+    # 按目标方案重新加密
+    if target_scheme == "entry":
         enc = entry_cipher.encrypt_entry(new_secret, enc_pw)
-        entry.algorithm = algo
+        entry.algorithm = "symmetric"
         entry.scheme = "entry"
         entry.ciphertext = enc["ciphertext"]
         entry.entry_salt = enc["salt"]
         entry.entry_iv = enc["iv"]
-        if req.new_entry_password:
-            changes.append("entry_password")
     else:
         # legacy：服务端密钥加密
-        algo = entry.algorithm
-        if req.algorithm is not None and req.algorithm != entry.algorithm:
-            _require_algorithm(req.algorithm)
-            algo = req.algorithm
+        entry.algorithm = target_algo
+        entry.scheme = "legacy"
+        entry.ciphertext = manager.encrypt_secret(db, target_algo, new_secret)
+        entry.entry_salt = ""
+        entry.entry_iv = ""
 
-        if req.secret is not None or algo != entry.algorithm:
-            plain = (
-                req.secret
-                if req.secret is not None
-                else manager.decrypt_secret(db, entry.algorithm, entry.ciphertext)
-            )
-            entry.algorithm = algo
-            entry.ciphertext = manager.encrypt_secret(db, algo, plain)
-            if req.secret is not None:
-                changes.append("secret")
-            if algo != entry.algorithm:
-                changes.append("algorithm")
+    # 变更审计字段
+    if target_scheme == "entry" and req.new_entry_password:
+        changes.append("entry_password")
+    if algo_changed:
+        changes.append("algorithm")
 
     entry.updated_by = user.username
     entry.updated_at = datetime.now(timezone.utc)

@@ -35,12 +35,13 @@
       <nav class="tabs">
         <button class="tab active" data-tab="pw">🔑 密码</button>
         <button class="tab" data-tab="file">🗂️ 文件保险箱</button>
+        <button class="tab" data-tab="key">🔐 密钥库</button>
       </nav>
 
       <!-- 密码面板 -->
       <section id="pw-panel">
         <div class="toolbar">
-          <input id="search-input" type="text" placeholder="搜索标题 / 账号…" />
+          <input id="search-input" type="text" placeholder="搜索账号…" />
           <div class="spacer"></div>
           <button id="add-btn" class="btn primary">＋ 新增密码</button>
         </div>
@@ -48,7 +49,7 @@
         <table class="pw-table">
           <thead>
             <tr>
-              <th>标题</th><th>账号</th><th>算法</th><th>分组</th><th>更新时间</th><th>操作人</th><th>操作</th>
+              <th>账号</th><th>加密方式</th><th>分组</th><th>更新时间</th><th>操作人</th><th>操作</th>
             </tr>
           </thead>
           <tbody id="pw-tbody"></tbody>
@@ -82,6 +83,30 @@
         </table>
         <div id="file-empty" class="empty hidden">暂无加密文件，点击「上传并加密」选择文件。</div>
       </section>
+
+      <!-- 密钥库面板 -->
+      <section id="key-panel" class="hidden">
+        <div class="toolbar">
+          <label class="inline-label">所属分组</label>
+          <select id="key-group-filter"></select>
+          <input id="key-search" type="text" placeholder="搜索密钥名 / 创建人…" />
+          <div class="spacer"></div>
+          <button id="key-gen-btn" class="btn primary">＋ 生成密钥</button>
+          <button id="key-import-btn" class="btn ghost">⬆️ 导入密钥</button>
+        </div>
+        <div id="key-hint" class="keys-status">
+          密钥库按分组保存，每组可有多对命名密钥（含公钥与可选私钥）。导出私钥请谨慎分享。
+        </div>
+        <table class="pw-table">
+          <thead>
+            <tr>
+              <th>名称</th><th>算法</th><th>分组</th><th>指纹</th><th>私钥</th><th>创建时间</th><th>创建人</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="key-tbody"></tbody>
+        </table>
+        <div id="key-empty" class="empty hidden">该分组暂无密钥条目，点击「生成密钥」或「导入密钥」开始。</div>
+      </section>
     </main>
   </div>
 
@@ -93,7 +118,13 @@
       <input id="f-title" type="text" />
       <label>账号</label>
       <input id="f-username" type="text" />
-      <label>条目密码 * <span class="hint">用于加密本条记录，查看/修改都需输入</span></label>
+      <label>加密方式 *</label>
+      <select id="f-algorithm">
+        <option value="symmetric">对称加密（条目密码，零知识）</option>
+        <option value="gpg">GPG 加密（服务端密钥）</option>
+        <option value="sm2">SM2 加密（国密，服务端密钥）</option>
+      </select>
+      <label id="f-entry-pw-label">条目密码 * <span class="hint">对称加密时必填；服务端密钥方式无需填写</span></label>
       <input id="f-entry-password" type="password" autocomplete="new-password" />
       <label id="f-new-pw-label" class="hidden">新条目密码（修改后留空则沿用原密码）</label>
       <input id="f-new-entry-password" type="password" autocomplete="new-password" class="hidden" />
@@ -245,6 +276,63 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
+
+  <!-- 生成密钥 -->
+  <div id="keygen-modal" class="modal hidden">
+    <div class="modal-card">
+      <h2>生成新密钥</h2>
+      <label>密钥名称 *</label>
+      <input id="kg-name" type="text" placeholder="如：研发中心 GPG 主密钥" />
+      <label>加密算法 *</label>
+      <select id="kg-algorithm">
+        <option value="gpg">GPG (OpenPGP, RSA-2048)</option>
+        <option value="sm2">SM2 (国密)</option>
+      </select>
+      <label>所属分组 *</label>
+      <select id="kg-group"></select>
+      <p class="hint" style="margin:8px 0 0;color:#6b7280;font-size:13px;line-height:1.6">
+        生成后将同时保存<strong>公钥 + 私钥</strong>到本服务。请妥善保管，可用「导出私钥」获取完整密钥。
+      </p>
+      <div class="modal-actions">
+        <button id="kg-cancel" class="btn ghost">取消</button>
+        <button id="kg-save" class="btn primary">生成</button>
+      </div>
+      <div id="kg-error" class="error"></div>
+    </div>
+  </div>
+
+  <!-- 导入密钥 -->
+  <div id="keyimport-modal" class="modal hidden">
+    <div class="modal-card">
+      <h2>导入密钥</h2>
+      <label>密钥名称 *</label>
+      <input id="ki-name" type="text" placeholder="如：合作方公开密钥" />
+      <label>加密算法 *</label>
+      <select id="ki-algorithm">
+        <option value="gpg">GPG (OpenPGP)</option>
+        <option value="sm2">SM2 (国密)</option>
+      </select>
+      <label>所属分组 *</label>
+      <select id="ki-group"></select>
+      <label>公钥 * <span class="hint">GPG: ASCII armored PEM；SM2: 64 个十六进制字符</span></label>
+      <textarea id="ki-pub" rows="6" placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----&#10;…或 SM2 公钥字符串"></textarea>
+      <label>私钥 <span class="hint">可选；只导入公钥也可</span></label>
+      <textarea id="ki-priv" rows="6" placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----&#10;…或 SM2 私钥字符串"></textarea>
+      <div class="modal-actions">
+        <button id="ki-cancel" class="btn ghost">取消</button>
+        <button id="ki-save" class="btn primary">导入</button>
+      </div>
+      <div id="ki-error" class="error"></div>
+    </div>
+  </div>
+
+  <!-- 全屏等待弹窗（提交 / 解密期间显示） -->
+  <div id="wait-modal" class="wait hidden" role="alert" aria-live="assertive">
+    <div class="wait-card">
+      <div class="spinner"></div>
+      <p id="wait-text">正在处理…</p>
+    </div>
+  </div>
 
   <script src="/app.js"></script>
 </body>

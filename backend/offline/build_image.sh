@@ -11,13 +11,17 @@ cd "$PROJECT_ROOT"
 IMAGE=passwdpm:latest
 TARBALL=backend/offline/passwdpm_image.tar
 
+# 目标服务器是 Linux x86_64；显式指定 platform，避免在 arm64 / 多架构主机上
+# 产出无法在目标服务器运行的镜像。
+PLATFORM=linux/amd64
+
 if [ "${1:-}" = "offline" ]; then
   # 离线构建：要求 offline/wheels 已是 Linux manylinux 包
   echo ">>> [离线] 构建镜像（依赖来自 offline/wheels，需先准备好 Linux 版依赖包）"
-  docker build --no-cache -t "$IMAGE" --build-arg OFFLINE=1 ./backend
+  docker build --no-cache --platform "$PLATFORM" -t "$IMAGE" --build-arg OFFLINE=1 ./backend
 else
   echo ">>> [联网] 构建镜像（依赖从 PyPI 拉取）"
-  docker build --no-cache -t "$IMAGE" ./backend
+  docker build --no-cache --platform "$PLATFORM" -t "$IMAGE" ./backend
 fi
 
 echo ">>> 导出镜像到 $TARBALL"
