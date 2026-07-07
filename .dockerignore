@@ -1,0 +1,10 @@
+# 不纳入 Docker 构建上下文的文件
+.git
+.workbuddy
+**/__pycache__
+**/*.pyc
+backend/data
+backend/.env
+**/.secret_key
+# 若使用联网构建（PyPI），可排除离线包以加快构建；离线构建时需保留 offline/wheels
+# backend/offline/wheels

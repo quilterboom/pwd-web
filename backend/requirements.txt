@@ -1,0 +1,11 @@
+# 运行时依赖（已锁定版本，便于离线复现）
+fastapi==0.139.0
+uvicorn[standard]==0.50.2
+python-multipart==0.0.32
+PGPy==0.6.0
+gmssl==3.2.2
+passlib==1.7.4
+bcrypt==4.0.1          # passlib 1.7.4 与 bcrypt>=4.1 不兼容，必须固定
+PyJWT==2.13.0
+SQLAlchemy==2.0.51
+python-dotenv==1.2.2

@@ -1,0 +1,28 @@
+# 离线部署用法：
+#   1. 在本机能联网的机器上：bash backend/offline/build_image.sh
+#      （生成 passwdpm_image.tar，约几百 MB）
+#   2. 把整个项目目录（含 docker-compose.yml 与 passwdpm_image.tar）拷到离线服务器
+#   3. 在离线服务器：
+#        docker load -i backend/offline/passwdpm_image.tar
+#        docker compose up -d
+#   首次启动请用环境变量覆盖管理员密码（ADMIN_PASSWORD）。
+services:
+  passwdpm:
+    image: passwdpm:latest
+    container_name: passwdpm
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${PORT:-9010}:9010"
+    environment:
+      # 生产务必修改管理員初始密码
+      PORT: ${PORT:-9010}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      TOKEN_EXPIRE_MINUTES: ${TOKEN_EXPIRE_MINUTES:-1440}
+      SECRET_KEY: ${SECRET_KEY:-}
+    volumes:
+      # 数据库 + JWT 密钥持久化到宿主机
+      - ./backend/data:/app/data

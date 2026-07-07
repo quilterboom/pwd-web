@@ -1,0 +1,19 @@
+[Unit]
+Description=passwdpm 服务端加解密密码管理器
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/passwdpm/backend
+ExecStart=/opt/passwdpm/backend/venv/bin/python run.py
+Restart=always
+RestartSec=3
+User=passwdpm
+# 通过环境变量覆盖默认管理员密码（务必修改）
+Environment=ADMIN_USERNAME=admin
+Environment=ADMIN_PASSWORD=请改成强密码
+Environment=HOST=0.0.0.0
+Environment=PORT=9010
+
+[Install]
+WantedBy=multi-user.target

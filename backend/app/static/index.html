@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>密码管理器 · passwdpm</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <!-- 登录页 -->
+  <div id="login-view" class="login-wrap">
+    <form id="login-form" class="card login-card">
+      <h1>🔐 passwdpm</h1>
+      <p class="subtitle">服务端 GPG / SM2 加解密密码管理器</p>
+      <label>用户名</label>
+      <input id="login-username" type="text" autocomplete="username" required />
+      <label>密码</label>
+      <input id="login-password" type="password" autocomplete="current-password" required />
+      <button type="submit" class="btn primary">登录</button>
+      <div id="login-error" class="error"></div>
+    </form>
+  </div>
+
+  <!-- 主应用 -->
+  <div id="app-view" class="app-wrap hidden">
+    <header class="topbar">
+      <div class="brand">🔐 passwdpm</div>
+      <div class="spacer"></div>
+      <span id="current-user" class="user"></span>
+      <button id="admin-btn" class="btn ghost hidden">⚙️ 管理</button>
+      <button id="logout-btn" class="btn ghost">退出</button>
+    </header>
+
+    <main class="container">
+      <nav class="tabs">
+        <button class="tab active" data-tab="pw">🔑 密码</button>
+        <button class="tab" data-tab="file">🗂️ 文件保险箱</button>
+      </nav>
+
+      <!-- 密码面板 -->
+      <section id="pw-panel">
+        <div class="toolbar">
+          <input id="search-input" type="text" placeholder="搜索标题 / 账号…" />
+          <div class="spacer"></div>
+          <button id="add-btn" class="btn primary">＋ 新增密码</button>
+        </div>
+        <div id="keys-status" class="keys-status"></div>
+        <table class="pw-table">
+          <thead>
+            <tr>
+              <th>标题</th><th>账号</th><th>算法</th><th>分组</th><th>更新时间</th><th>操作人</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="pw-tbody"></tbody>
+        </table>
+        <div id="empty-hint" class="empty hidden">暂无密码记录，点击右上角「新增密码」开始。</div>
+      </section>
+
+      <!-- 文件保险箱面板 -->
+      <section id="file-panel" class="hidden">
+        <div class="toolbar">
+          <input id="file-input" type="file" hidden />
+          <button id="file-upload-btn" class="btn primary">⬆️ 上传并加密</button>
+          <label class="inline-label">加密算法</label>
+          <select id="file-algorithm">
+            <option value="gpg">GPG (OpenPGP)</option>
+            <option value="sm2">SM2 (国密)</option>
+          </select>
+          <label class="inline-label">所属分组</label>
+          <select id="file-group"></select>
+        </div>
+        <div id="file-hint" class="keys-status">
+          文件在服务端用所选算法（GPG / SM2）的公钥加密后保存；只有服务器私钥能还原原文。数据按分组隔离，仅本组成员可见。
+        </div>
+        <table class="pw-table">
+          <thead>
+            <tr>
+              <th>文件名</th><th>算法</th><th>分组</th><th>大小</th><th>更新时间</th><th>操作人</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="file-tbody"></tbody>
+        </table>
+        <div id="file-empty" class="empty hidden">暂无加密文件，点击「上传并加密」选择文件。</div>
+      </section>
+    </main>
+  </div>
+
+  <!-- 新增 / 编辑密码弹窗 -->
+  <div id="form-modal" class="modal hidden">
+    <div class="modal-card">
+      <h2 id="form-title">新增密码</h2>
+      <label>标题 *</label>
+      <input id="f-title" type="text" />
+      <label>账号</label>
+      <input id="f-username" type="text" />
+      <label>条目密码 * <span class="hint">用于加密本条记录，查看/修改都需输入</span></label>
+      <input id="f-entry-password" type="password" autocomplete="new-password" />
+      <label id="f-new-pw-label" class="hidden">新条目密码（修改后留空则沿用原密码）</label>
+      <input id="f-new-entry-password" type="password" autocomplete="new-password" class="hidden" />
+      <label>所属分组 *</label>
+      <select id="f-group"></select>
+      <label>密码 / 密钥明文 *</label>
+      <div class="secret-row">
+        <input id="f-secret" type="text" />
+        <button type="button" id="f-reveal" class="btn ghost small">显示</button>
+        <button type="button" id="f-gen" class="btn ghost small">随机</button>
+      </div>
+      <label>备注</label>
+      <textarea id="f-notes" rows="3"></textarea>
+      <label>变更说明（可选，记入修改记录）</label>
+      <input id="f-comment" type="text" placeholder="例如：季度轮换" />
+      <div class="modal-actions">
+        <button id="form-cancel" class="btn ghost">取消</button>
+        <button id="form-save" class="btn primary">保存</button>
+      </div>
+      <div id="form-error" class="error"></div>
+    </div>
+  </div>
+
+  <!-- 查看弹窗 -->
+  <div id="view-modal" class="modal hidden">
+    <div class="modal-card">
+      <h2 id="view-title">查看密码</h2>
+      <div class="kv"><span>账号</span><b id="view-username"></b></div>
+      <div class="kv"><span>加密方式</span><b id="view-algorithm"></b></div>
+      <div class="kv"><span>分组</span><b id="view-group"></b></div>
+      <!-- 锁定区：entry 方案需输入条目密码 -->
+      <div id="view-lock" class="hidden">
+        <p class="lock-hint">🔒 该密码由「条目密码」保护，输入后才能查看。</p>
+        <div class="secret-row">
+          <input id="view-entry-password" type="password" placeholder="输入条目密码" />
+          <button id="view-unlock" class="btn primary small">解密查看</button>
+        </div>
+        <div id="view-lock-error" class="error"></div>
+      </div>
+      <!-- 明文区 -->
+      <div id="view-secret-wrap" class="kv hidden">
+        <span>密码明文</span>
+        <div class="secret-box">
+          <code id="view-secret"></code>
+          <button id="view-copy" class="btn ghost small">复制</button>
+        </div>
+      </div>
+      <div class="kv"><span>备注</span><b id="view-notes"></b></div>
+      <div class="modal-actions">
+        <button id="view-close" class="btn ghost">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 修改记录弹窗 -->
+  <div id="history-modal" class="modal hidden">
+    <div class="modal-card wide">
+      <h2>修改记录</h2>
+      <table class="hist-table">
+        <thead>
+          <tr><th>时间</th><th>动作</th><th>标题</th><th>账号</th><th>算法</th><th>操作人</th><th>说明</th></tr>
+        </thead>
+        <tbody id="history-tbody"></tbody>
+      </table>
+      <div class="modal-actions">
+        <button id="history-close" class="btn ghost">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 系统管理弹窗（仅管理员） -->
+  <div id="admin-modal" class="modal hidden">
+    <div class="modal-card wide">
+      <h2>系统管理</h2>
+      <nav class="subtabs">
+        <button class="subtab active" data-sub="users">用户</button>
+        <button class="subtab" data-sub="groups">分组</button>
+      </nav>
+
+      <section id="admin-users-sec">
+        <div class="toolbar">
+          <div class="spacer"></div>
+          <button id="add-user-btn" class="btn primary">＋ 新增用户</button>
+        </div>
+        <table class="pw-table">
+          <thead>
+            <tr><th>用户名</th><th>管理员</th><th>所属分组</th><th>操作</th></tr>
+          </thead>
+          <tbody id="admin-users-tbody"></tbody>
+        </table>
+      </section>
+
+      <section id="admin-groups-sec" class="hidden">
+        <div class="toolbar">
+          <div class="spacer"></div>
+          <button id="add-group-btn" class="btn primary">＋ 新增分组</button>
+        </div>
+        <table class="pw-table">
+          <thead>
+            <tr><th>分组名</th><th>成员数</th><th>成员</th><th>操作</th></tr>
+          </thead>
+          <tbody id="admin-groups-tbody"></tbody>
+        </table>
+      </section>
+
+      <div class="modal-actions">
+        <button id="admin-close" class="btn ghost">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新增 / 编辑用户弹窗 -->
+  <div id="user-modal" class="modal hidden">
+    <div class="modal-card">
+      <h2 id="user-modal-title">新增用户</h2>
+      <label>用户名 *</label>
+      <input id="u-username" type="text" />
+      <label id="u-pwd-label">密码 *</label>
+      <input id="u-password" type="password" autocomplete="new-password" />
+      <label class="checkbox-label">
+        <input id="u-isadmin" type="checkbox" /> 管理员（可管理用户与分组、查看所有分组数据）
+      </label>
+      <label>所属分组</label>
+      <div id="u-groups" class="checkbox-list"></div>
+      <div class="modal-actions">
+        <button id="user-cancel" class="btn ghost">取消</button>
+        <button id="user-save" class="btn primary">保存</button>
+      </div>
+      <div id="user-error" class="error"></div>
+    </div>
+  </div>
+
+  <!-- 新增 / 编辑分组弹窗 -->
+  <div id="group-modal" class="modal hidden">
+    <div class="modal-card">
+      <h2 id="group-modal-title">新增分组</h2>
+      <label>分组名称 *</label>
+      <input id="g-name" type="text" />
+      <label>描述</label>
+      <input id="g-desc" type="text" />
+      <label>成员</label>
+      <div id="g-members" class="checkbox-list"></div>
+      <div class="modal-actions">
+        <button id="group-cancel" class="btn ghost">取消</button>
+        <button id="group-save" class="btn primary">保存</button>
+      </div>
+      <div id="group-error" class="error"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
