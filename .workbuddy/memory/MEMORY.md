@@ -36,5 +36,5 @@
 - admin/TestPass!2026 是当前测试数据卷里的账号。
 
 ## 最近一次镜像
-- `passwdpm:latest` ID `5f71b1e79b19`，462MB（虚拟），141MB（tar）。
-- commit `604fda8` 是 feature 集大成：算法选择 + 等待窗口 + OrgKey 库 + 多租户 + 文件保险箱 + entry 零知识。
+- `passwdpm:latest` ID `4a9923c7c0a5`，462MB（虚拟），141MB（tar）。
+- commit `7a320eb` 是最新一组改动：导出 bug 修复 + OrgKey 选择加密 + 取消标题。
